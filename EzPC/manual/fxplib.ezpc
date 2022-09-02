@@ -163,6 +163,22 @@ def void MatMulBwdB(int32_pl i, int32_pl j, int32_pl k, int64_al[i][j] A, int64_
   };
 }
 
+def void ReLU(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      B[idxI][idxJ] = (A[idxI][idxJ] >= 0L) ? A[idxI][idxJ] : 0L;
+    };
+  };
+}
+
+def void ReLUBwd(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] AGrad, int64_al[i][j] BGrad) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      AGrad[idxI][idxJ] = (A[idxI][idxJ] >= 0L) ? BGrad[idxI][idxJ] : 0L;
+    };
+  };
+}
+
 (* nearest round for piecewise polynomials *)
 def int64_al FxpNearestRound0D(int64_al shift48val) {
   bool_bl negative = shift48val < 0L;
