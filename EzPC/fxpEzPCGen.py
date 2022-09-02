@@ -374,6 +374,29 @@ class MatrixMultFunc(Func):
 
 matmul = MatrixMultFunc.apply
 
+# relu function
+class ReLUFunc(Func):
+    @staticmethod
+    def apply(a: Tensor) -> Tensor:
+        assert len(a.shape) == 2
+        idims = shapeToFuncCallString(a.shape)
+        result = Tensor(a.shape, anyInputRequiresGrad(a))
+        fwdTemplate = 'int64_al{shape} {result};\n'\
+                      'ReLU2D({idims}{a}, {result});\n'
+        fwdCode = fwdTemplate.format(shape = shapeToArrayDefString(a.shape),
+                                     result = result.name, idims = idims,
+                                     a = a.name)
+        fwdTape.append(fwdCode)
+        bwdCode = ''
+        if a.requiresGrad:
+            bwdTemplate = 'ReLUBwd2D({idims}{a}, {a}Grad, {result}Grad);\n'
+            bwdCode += bwdTemplate.format(idims = idims, a = a.name,
+                                          result = result.name)
+        bwdTape.append(bwdCode)
+        return result
+
+relu = ReLUFunc.apply
+
 # sigmoid function
 class SigmoidFunc(Func):
     @staticmethod

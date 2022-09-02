@@ -163,7 +163,7 @@ def void MatMulBwdB(int32_pl i, int32_pl j, int32_pl k, int64_al[i][j] A, int64_
   };
 }
 
-def void ReLU(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B) {
+def void ReLU2D(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B) {
   for idxI = [0:i] {
     for idxJ = [0:j] {
       B[idxI][idxJ] = (A[idxI][idxJ] >= 0L) ? A[idxI][idxJ] : 0L;
@@ -171,7 +171,7 @@ def void ReLU(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B) {
   };
 }
 
-def void ReLUBwd(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] AGrad, int64_al[i][j] BGrad) {
+def void ReLUBwd2D(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] AGrad, int64_al[i][j] BGrad) {
   for idxI = [0:i] {
     for idxJ = [0:j] {
       AGrad[idxI][idxJ] = (A[idxI][idxJ] >= 0L) ? BGrad[idxI][idxJ] : 0L;
