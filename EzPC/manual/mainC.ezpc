@@ -1,0 +1,15 @@
+totalTrainLoss = totalTrainLoss + lossAndAcc[0];
+totalTrainCorrect = totalTrainCorrect + lossAndAcc[1];
+};
+divisor = BatchSize * NumTrainBat;
+totalTrainCorrect = (totalTrainCorrect * FxpOne) / divisor;
+divisor = divisor * NumClasses;
+totalTrainLoss = totalTrainLoss / divisor;
+output(ALL, totalTrainLoss);
+output(ALL, totalTrainCorrect);
+for batch = [0:NumTestBat] {
+(* output(ALL, batch); *)
+int64_al[TimeSteps][BatchSize][NumFeatures] batchX;
+int64_al[BatchSize][NumClasses] batchTarget;
+CreateTestBatch(testData, batchX, batchTarget, batch);
+int64_al[2] lossAndAcc;

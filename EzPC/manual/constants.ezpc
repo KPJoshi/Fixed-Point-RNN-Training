@@ -1,0 +1,28 @@
+(* 1 in fixpoint, used in many places *)
+int64 FxpOne = 16777216L;
+
+(* input metadata *)
+int32 NumTrainSamp = 7291;
+int32 NumTestSamp = 2007;
+int32 NumClasses = 10;
+int32 NumFeatures = 16;
+int32 TimeSteps = 16;
+
+(* training options *)
+int32 NumEpochs = 300;
+int32 BatchSize = 128;
+int32 HiddenDim = 10;
+int32 RankW = 4;
+(* int32 RankU = 0; *)
+
+(* loss amplifier - increasing this increases training speed and risk of overflows *)
+int64 MSEAmpFactor = 4L * FxpOne; (* 4 in fixpoint *)
+
+(* ADAM hyperparameters *)
+int64 AdamBeta1 = 15099494L; (* beta1 ~ 0.9 *)
+int64 AdamBeta2 = 16760439L; (* beta2 ~ 0.999 *)
+
+(* derived constants *)
+int32 RawSampDataSize = NumClasses + NumFeatures * TimeSteps;
+int32 NumTrainBat = NumTrainSamp / BatchSize;
+int32 NumTestBat = NumTestSamp / BatchSize;

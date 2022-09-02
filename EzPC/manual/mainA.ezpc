@@ -1,0 +1,4 @@
+def void main(){
+(* input training and testing samples *)
+input(CLIENT, trainData, int64_al[NumTrainSamp][RawSampDataSize]);
+input(CLIENT, testData, int64_al[NumTestSamp][RawSampDataSize]);

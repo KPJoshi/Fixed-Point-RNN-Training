@@ -1,0 +1,233 @@
+def int32_pl CalcDataRawIndex(int32_pl NumRows, int32_pl NumCols,
+                              int32_pl idxChan, int32_pl idxRow, int32_pl idxCol) {
+  return idxCol + NumCols * (idxRow + NumRows * idxChan);
+}
+
+def int32_pl CalcFiltRawIndex(int32_pl InNumChan, int32_pl NumRows, int32_pl NumCols,
+                              int32_pl idxOutChan, int32_pl idxInChan, int32_pl idxRow, int32_pl idxCol) {
+  return idxCol + NumCols * (idxRow + NumRows * (idxInChan + InNumChan * idxOutChan));
+}
+
+(*
+NumSamples - no. samples being evald
+InNumChan - no. input chans
+InNumRows - no. input rows
+InNumCols - no. input cols
+FiltNumRows - no. filt rows
+FiltNumCols - no. filt cols
+OutNumChan - no. output chans
+OutNumRows - no. output rows
+OutNumCols - no. output cols
+Input[NumSamples][InNumChan * InNumRows * InNumCols] - input
+Filter[OutNumChan * InNumChan * FiltNumRows * FiltNumCols] - filter
+Bias[OutNumChan] - bias
+Output[NumSamples][OutNumChan * OutNumRows * OutNumCols] - output
+StrideRow - row stride
+StrideCol - col stride
+PadRow - row padding
+PadCol - col padding
+*)
+
+def void Conv(int32_pl NumSamples, int32_pl InNumChan, int32_pl InNumRows,
+              int32_pl InNumCols, int32_pl FiltNumRows, int32_pl FiltNumCols,
+              int32_pl OutNumChan, int32_pl OutNumRows, int32_pl OutNumCols,
+              int32_pl StrideRow, int32_pl StrideCol, int32_pl PadRow, int32_pl PadCol,
+              int64_al[NumSamples][InNumChan * InNumRows * InNumCols] Input,
+              int64_al[OutNumChan * InNumChan * FiltNumRows * FiltNumCols] Filter,
+              int64_al[OutNumChan] Bias,
+              int64_al[NumSamples][OutNumChan * OutNumRows * OutNumCols] Output) {
+  for idxSamp = [0:NumSamples] {
+    for idxOutChan = [0:OutNumChan] {
+      for idxOutRow = [0:OutNumRows] {
+        int32_pl InRowStart = idxOutRow * StrideRow - PadRow;
+        for idxOutCol = [0:OutNumCols] {
+          int32_pl InColStart = (idxOutCol * StrideCol) - PadCol;
+          int64_al accumulator = Bias[idxOutChan];
+          for idxInChan = [0:InNumChan] {
+            for idxFiltRow = [0:FiltNumRows] {
+              int32_pl idxInRow = idxFiltRow + InRowStart;
+              for idxFiltCol = [0:FiltNumCols] {
+                int32_pl idxInCol = idxFiltCol + InColStart;
+                if (idxInRow < 0 || idxInRow >= InNumRows || idxInCol < 0 || idxInCol >= InNumCols) {
+                  NumSamples = NumSamples;
+                } else {
+                  int32_pl idxInRaw = CalcDataRawIndex(InNumRows, InNumCols,
+                                                       idxInChan, idxInRow, idxInCol);
+                  int64_al inElement = Input[idxSamp][idxInRaw];
+                  int32_pl idxFiltRaw = CalcFiltRawIndex(InNumChan, FiltNumRows, FiltNumCols,
+                                                         idxOutChan, idxInChan, idxFiltRow, idxFiltCol);
+                  accumulator = accumulator + (inElement * Filter[idxFiltRaw]);
+                };
+              };
+            };
+          };
+          int32_pl idxOutRaw = CalcDataRawIndex(OutNumRows, OutNumCols,
+                                                idxOutChan, idxOutRow, idxOutCol);
+          Output[idxSamp][idxOutRaw] = accumulator;
+        };
+      };
+    };
+  };
+}
+
+def void ConvBwdIF(int32_pl NumSamples, int32_pl InNumChan, int32_pl InNumRows,
+                   int32_pl InNumCols, int32_pl FiltNumRows, int32_pl FiltNumCols,
+                   int32_pl OutNumChan, int32_pl OutNumRows, int32_pl OutNumCols,
+                   int32_pl StrideRow, int32_pl StrideCol, int32_pl PadRow, int32_pl PadCol,
+                   int64_al[NumSamples][InNumChan * InNumRows * InNumCols] Input,
+                   int64_al[NumSamples][InNumChan * InNumRows * InNumCols] InputGrad,
+                   int64_al[OutNumChan * InNumChan * FiltNumRows * FiltNumCols] Filter,
+                   int64_al[OutNumChan * InNumChan * FiltNumRows * FiltNumCols] FilterGrad,
+                   int64_al[OutNumChan] BiasGrad,
+                   int64_al[NumSamples][OutNumChan * OutNumRows * OutNumCols] OutputGrad) {
+  for idxSamp = [0:NumSamples] {
+    for idxOutChan = [0:OutNumChan] {
+      for idxOutRow = [0:OutNumRows] {
+        int32_pl InRowStart = idxOutRow * StrideRow - PadRow;
+        for idxOutCol = [0:OutNumCols] {
+          int32_pl InColStart = (idxOutCol * StrideCol) - PadCol;
+          int32_pl idxOutRaw = CalcDataRawIndex(OutNumRows, OutNumCols,
+                                                idxOutChan, idxOutRow, idxOutCol);
+          int64_al outGradElement = OutputGrad[idxSamp][idxOutRaw];
+          BiasGrad[idxOutChan] = BiasGrad[idxOutChan] + outGradElement;
+          for idxInChan = [0:InNumChan] {
+            for idxFiltRow = [0:FiltNumRows] {
+              int32_pl idxInRow = idxFiltRow + InRowStart;
+              for idxFiltCol = [0:FiltNumCols] {
+                int32_pl idxInCol = idxFiltCol + InColStart;
+                if (idxInRow < 0 || idxInRow >= InNumRows || idxInCol < 0 || idxInCol >= InNumCols) {
+                  NumSamples = NumSamples;
+                } else {
+                  int32_pl idxInRaw = CalcDataRawIndex(InNumRows, InNumCols,
+                                                       idxInChan, idxInRow, idxInCol);
+                  int64_al inElement = Input[idxSamp][idxInRaw];
+                  int32_pl idxFiltRaw = CalcFiltRawIndex(InNumChan, FiltNumRows, FiltNumCols,
+                                                         idxOutChan, idxInChan, idxFiltRow, idxFiltCol);
+                  int64_al filtElement = Filter[idxFiltRaw];
+                  InputGrad[idxSamp][idxInRaw] = InputGrad[idxSamp][idxInRaw] + filtElement * outGradElement;
+                  FilterGrad[idxFiltRaw] = FilterGrad[idxFiltRaw] + inElement * outGradElement;
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}
+
+def void ConvBwdF(int32_pl NumSamples, int32_pl InNumChan, int32_pl InNumRows,
+                  int32_pl InNumCols, int32_pl FiltNumRows, int32_pl FiltNumCols,
+                  int32_pl OutNumChan, int32_pl OutNumRows, int32_pl OutNumCols,
+                  int32_pl StrideRow, int32_pl StrideCol, int32_pl PadRow, int32_pl PadCol,
+                  int64_al[NumSamples][InNumChan * InNumRows * InNumCols] Input,
+                  int64_al[OutNumChan * InNumChan * FiltNumRows * FiltNumCols] FilterGrad,
+                  int64_al[OutNumChan] BiasGrad,
+                  int64_al[NumSamples][OutNumChan * OutNumRows * OutNumCols] OutputGrad) {
+  for idxSamp = [0:NumSamples] {
+    for idxOutChan = [0:OutNumChan] {
+      for idxOutRow = [0:OutNumRows] {
+        int32_pl InRowStart = idxOutRow * StrideRow - PadRow;
+        for idxOutCol = [0:OutNumCols] {
+          int32_pl InColStart = (idxOutCol * StrideCol) - PadCol;
+          int32_pl idxOutRaw = CalcDataRawIndex(OutNumRows, OutNumCols,
+                                                idxOutChan, idxOutRow, idxOutCol);
+          int64_al outGradElement = OutputGrad[idxSamp][idxOutRaw];
+          BiasGrad[idxOutChan] = BiasGrad[idxOutChan] + outGradElement;
+          for idxInChan = [0:InNumChan] {
+            for idxFiltRow = [0:FiltNumRows] {
+              int32_pl idxInRow = idxFiltRow + InRowStart;
+              for idxFiltCol = [0:FiltNumCols] {
+                int32_pl idxInCol = idxFiltCol + InColStart;
+                if (idxInRow < 0 || idxInRow >= InNumRows || idxInCol < 0 || idxInCol >= InNumCols) {
+                  NumSamples = NumSamples;
+                } else {
+                  int32_pl idxInRaw = CalcDataRawIndex(InNumRows, InNumCols,
+                                                       idxInChan, idxInRow, idxInCol);
+                  int64_al inElement = Input[idxSamp][idxInRaw];
+                  int32_pl idxFiltRaw = CalcFiltRawIndex(InNumChan, FiltNumRows, FiltNumCols,
+                                                         idxOutChan, idxInChan, idxFiltRow, idxFiltCol);
+                  FilterGrad[idxFiltRaw] = FilterGrad[idxFiltRaw] + inElement * outGradElement;
+                };
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}
+
+def void MaxPool(int32_pl NumSamples, int32_pl NumChan, int32_pl InNumRows,
+                 int32_pl InNumCols, int32_pl FiltNumRows, int32_pl FiltNumCols,
+                 int32_pl OutNumRows, int32_pl OutNumCols,
+                 int32_pl StrideRow, int32_pl StrideCol, int32_pl PadRow, int32_pl PadCol,
+                 int64_al[NumSamples][NumChan * InNumRows * InNumCols] Input,
+                 int64_al[NumSamples][NumChan * OutNumRows * OutNumCols] Output) {
+  for idxSamp = [0:NumSamples] {
+    for idxChan = [0:NumChan] {
+      for idxOutRow = [0:OutNumRows] {
+        int32_pl InRowStart = idxOutRow * StrideRow - PadRow;
+        for idxOutCol = [0:OutNumCols] {
+          int32_pl InColStart = (idxOutCol * StrideCol) - PadCol;
+          int64_al maximum = -9223372036854775807L; (* -2^63+1 *)
+          for idxFiltRow = [0:FiltNumRows] {
+            int32_pl idxInRow = idxFiltRow + InRowStart;
+            for idxFiltCol = [0:FiltNumCols] {
+              int32_pl idxInCol = idxFiltCol + InColStart;
+              if (idxInRow < 0 || idxInRow >= InNumRows || idxInCol < 0 || idxInCol >= InNumCols) {
+                NumSamples = NumSamples;
+              } else {
+                int32_pl idxInRaw = CalcDataRawIndex(InNumRows, InNumCols,
+                                                     idxChan, idxInRow, idxInCol);
+                int64_al inElement = Input[idxSamp][idxInRaw];
+                maximum = (maximum < inElement) ? inElement : maximum;
+              };
+            };
+          };
+          int32_pl idxOutRaw = CalcDataRawIndex(OutNumRows, OutNumCols,
+                                                idxChan, idxOutRow, idxOutCol);
+          Output[idxSamp][idxOutRaw] = maximum;
+        };
+      };
+    };
+  };
+}
+
+def void MaxPoolBwd(int32_pl NumSamples, int32_pl NumChan, int32_pl InNumRows,
+                    int32_pl InNumCols, int32_pl FiltNumRows, int32_pl FiltNumCols,
+                    int32_pl OutNumRows, int32_pl OutNumCols,
+                    int32_pl StrideRow, int32_pl StrideCol, int32_pl PadRow, int32_pl PadCol,
+                    int64_al[NumSamples][NumChan * InNumRows * InNumCols] Input,
+                    int64_al[NumSamples][NumChan * InNumRows * InNumCols] InputGrad,
+                    int64_al[NumSamples][NumChan * OutNumRows * OutNumCols] Output,
+                    int64_al[NumSamples][NumChan * OutNumRows * OutNumCols] OutputGrad) {
+  for idxSamp = [0:NumSamples] {
+    for idxChan = [0:NumChan] {
+      for idxOutRow = [0:OutNumRows] {
+        int32_pl InRowStart = idxOutRow * StrideRow - PadRow;
+        for idxOutCol = [0:OutNumCols] {
+          int32_pl InColStart = (idxOutCol * StrideCol) - PadCol;
+          int32_pl idxOutRaw = CalcDataRawIndex(OutNumRows, OutNumCols,
+                                                idxChan, idxOutRow, idxOutCol);
+          int64_al outElement = Output[idxSamp][idxOutRaw];
+          for idxFiltRow = [0:FiltNumRows] {
+            int32_pl idxInRow = idxFiltRow + InRowStart;
+            for idxFiltCol = [0:FiltNumCols] {
+              int32_pl idxInCol = idxFiltCol + InColStart;
+              if (idxInRow < 0 || idxInRow >= InNumRows || idxInCol < 0 || idxInCol >= InNumCols) {
+                NumSamples = NumSamples;
+              } else {
+                int32_pl idxInRaw = CalcDataRawIndex(InNumRows, InNumCols,
+                                                     idxChan, idxInRow, idxInCol);
+                int64_al inElement = Input[idxSamp][idxInRaw];
+                int64_al effectiveGrad = (inElement == outElement) ? OutputGrad[idxSamp][idxOutRaw] : 0L;
+                InputGrad[idxSamp][idxInRaw] = InputGrad[idxSamp][idxInRaw] + effectiveGrad;
+              };
+            };
+          };
+        };
+      };
+    };
+  };
+}

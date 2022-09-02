@@ -1,0 +1,23 @@
+(* fill piecewise polynomial coefficients array *)
+int64_pl[5][SigmoidNumSeg] SigmoidSegData;
+FillSigmoidSegData(SigmoidSegData);
+int64_pl[5][TanhNumSeg] TanhSegData;
+FillTanhSegData(TanhSegData);
+int64_pl[5][RSqrtNumSeg] RSqrtSegData;
+FillRSqrtSegData(RSqrtSegData);
+for epoch = [0:NumEpochs] {
+output(ALL, epoch);
+int64_al totalTrainLoss = 0L;
+int64_al totalTrainCorrect = 0L;
+int64_al totalTestLoss = 0L;
+int64_al totalTestCorrect = 0L;
+int64_pl divisor;
+int32_pl[NumTrainSamp] permutation;
+CreatePermutation(epoch, permutation);
+for batch = [0:NumTrainBat] {
+(* output(ALL, batch); *)
+int64_al[TimeSteps][BatchSize][NumFeatures] batchX;
+int64_al[BatchSize][NumClasses] batchTarget;
+CreateTrainBatch(trainData, permutation, batchX, batchTarget, batch);
+(* inference results are stored here *)
+int64_al[2] lossAndAcc;

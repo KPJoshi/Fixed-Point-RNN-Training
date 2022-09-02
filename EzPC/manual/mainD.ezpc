@@ -1,0 +1,11 @@
+totalTestLoss = totalTestLoss + lossAndAcc[0];
+totalTestCorrect = totalTestCorrect + lossAndAcc[1];
+};
+divisor = BatchSize * NumTestBat;
+totalTestCorrect = (totalTestCorrect * FxpOne) / divisor;
+divisor = divisor * NumClasses;
+totalTestLoss = totalTestLoss / divisor;
+output(ALL, totalTestLoss);
+output(ALL, totalTestCorrect);
+};
+}

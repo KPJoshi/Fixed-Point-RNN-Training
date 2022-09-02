@@ -1,0 +1,363 @@
+(* create permutation *)
+def void CreatePermutation(int32_pl epoch, int32_pl[NumTrainSamp] permutation) {
+  int32_pl[NumTrainSamp] indices;
+  for samp = [0:NumTrainSamp] {
+    indices[samp] = samp;
+  };
+  for samp = [0:NumTrainSamp] {
+    (* weak RNG, hopefully good enough, can be replaced *)
+    int32_pl selected = ((epoch + 1) * (samp + 1) * 257) % (NumTrainSamp - samp);
+    permutation[samp] = indices[selected];
+    indices[selected] = indices[NumTrainSamp - samp - 1];
+  };
+}
+
+(* create batch *)
+def void UnpackRawSample(int32_pl numSamp, int64_al[numSamp][RawSampDataSize] rawData,
+                         int64_al[TimeSteps][BatchSize][NumFeatures] batchX, int64_al[BatchSize][NumClasses] batchTarget,
+                         int32_pl samp, int32_pl selected) {
+  for idxCls = [0:NumClasses] {
+    batchTarget[samp][idxCls] = rawData[selected][idxCls];
+  };
+  for timestep = [0:TimeSteps] {
+    for feat = [0:NumFeatures] {
+      batchX[timestep][samp][feat] = rawData[selected][NumClasses + (timestep * NumFeatures) + feat];
+    };
+  };
+}
+def void CreateTrainBatch(int64_al[NumTrainSamp][RawSampDataSize] rawData, int32_pl[NumTrainSamp] permutation,
+                          int64_al[TimeSteps][BatchSize][NumFeatures] batchX, int64_al[BatchSize][NumClasses] batchTarget,
+                          int32_pl batchNum) {
+  for samp = [0:BatchSize] {
+    int32_pl selected = permutation[(batchNum * BatchSize) + samp];
+    UnpackRawSample(NumTrainSamp, rawData, batchX, batchTarget, samp, selected);
+  };
+}
+def void CreateTestBatch(int64_al[NumTestSamp][RawSampDataSize] rawData,
+                          int64_al[TimeSteps][BatchSize][NumFeatures] batchX, int64_al[BatchSize][NumClasses] batchTarget,
+                          int32_pl batchNum) {
+  for samp = [0:BatchSize] {
+    int32_pl selected = (batchNum * BatchSize) + samp;
+    UnpackRawSample(NumTestSamp, rawData, batchX, batchTarget, samp, selected);
+  };
+}
+
+(* index timestep *)
+def void IndexTimestep(int64_al[TimeSteps][BatchSize][NumFeatures] batchX, int64_al[BatchSize][NumFeatures] Xt, int32_pl timestep) {
+  for samp = [0:BatchSize] {
+    for feat = [0:NumFeatures] {
+      Xt[samp][feat] = batchX[timestep][samp][feat];
+    };
+  };
+}
+
+(* add i,i->i *)
+def void Add1D(int32_pl i, int64_al[i] A, int64_al[i] B, int64_al[i] Res) {
+  for idxI = [0:i] {
+    Res[idxI] = A[idxI] + B[idxI];
+  };
+}
+(* add ij,ij->ij *)
+def void Add2D(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B, int64_al[i][j] Res) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      Res[idxI][idxJ] = A[idxI][idxJ] + B[idxI][idxJ];
+    };
+  };
+}
+
+(* add ij,j->ij *)
+def void AddBias(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[j] B, int64_al[i][j] Res) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      Res[idxI][idxJ] = A[idxI][idxJ] + B[idxJ];
+    };
+  };
+}
+(* sum-accumulate ij->j *)
+def void AddBiasBwd(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[j] B) {
+  for idxJ = [0:j] {
+    for idxI = [0:i] {
+      B[idxJ] = B[idxJ] + A[idxI][idxJ];
+    };
+  };
+}
+
+(* subtraction *)
+def void Subtract1D(int32_pl i, int64_al[i] A, int64_al[i] B, int64_al[i] Res) {
+  for idxI = [0:i] {
+    Res[idxI] = A[idxI] - B[idxI];
+  };
+}
+def void Subtract2D(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B, int64_al[i][j] Res) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      Res[idxI][idxJ] = A[idxI][idxJ] - B[idxI][idxJ];
+    };
+  };
+}
+
+(* pseudo-stochastic round for general use - see arXiv document 2009.13108 *)
+def int64_al FxpPseudoStochasticRound0D(int64_al shift48val) {
+  bool_bl negative = shift48val < 0L;
+  int64_bl absShift48val = negative ? 0L - shift48val : shift48val;
+  int64_al intPart = absShift48val >> 24L;
+  int64_bl upperFracPart = (absShift48val >> 12L) & 4095L; (* LSB bits 12-23 *)
+  int64_bl lowerFracPart = absShift48val & 4095L; (* LSB bits 0-11 *)
+  int64_al roundUp = (upperFracPart > lowerFracPart) ? 1L : 0L;
+  int64_al roundedIntPart = intPart + roundUp;
+  int64_al result = negative ? 0L - roundedIntPart : roundedIntPart;
+  return result;
+}
+
+(* madd i,i->i *)
+def void MAdd1D(int32_pl i, int64_al[i] A, int64_al[i] B, int64_al[i] Res) {
+  for idxI = [0:i] {
+    int64_al shift48val = A[idxI] * B[idxI];
+    Res[idxI] = Res[idxI] + FxpPseudoStochasticRound0D(shift48val);
+  };
+}
+(* madd ij,ij->ij*)
+def void MAdd2D(int32_pl i, int32_pl j, int64_al[i][j] A, int64_al[i][j] B, int64_al[i][j] Res) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      int64_al shift48val = A[idxI][idxJ] * B[idxI][idxJ];
+      Res[idxI][idxJ] = Res[idxI][idxJ] + FxpPseudoStochasticRound0D(shift48val);
+    };
+  };
+}
+
+(* mult ij,jk->ik (aka matrix mult) *)
+def void MatMul(int32_pl i, int32_pl j, int32_pl k, int64_al[i][j] A, int64_al[j][k] B, int64_al[i][k] Res) {
+  for idxI = [0:i] {
+    for idxK = [0:k] {
+      int64_al accumulator = 0L;
+      for idxJ = [0:j] {
+        accumulator = accumulator + (A[idxI][idxJ] * B[idxJ][idxK]);
+      };
+      Res[idxI][idxK] = FxpPseudoStochasticRound0D(accumulator);
+    };
+  };
+}
+(* mm-accumulate (for backward of mm) *)
+def void MatMulBwdA(int32_pl i, int32_pl j, int32_pl k, int64_al[i][k] A, int64_al[j][k] B, int64_al[i][j] Res) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      int64_al accumulator = 0L;
+      for idxK = [0:k] {
+        accumulator = accumulator + (A[idxI][idxK] * B[idxJ][idxK]);
+      };
+      Res[idxI][idxJ] = Res[idxI][idxJ] + FxpPseudoStochasticRound0D(accumulator);
+    };
+  };
+}
+def void MatMulBwdB(int32_pl i, int32_pl j, int32_pl k, int64_al[i][j] A, int64_al[i][k] B, int64_al[j][k] Res) {
+  for idxJ = [0:j] {
+    for idxK = [0:k] {
+      int64_al accumulator = 0L;
+      for idxI = [0:i] {
+        accumulator = accumulator + (A[idxI][idxJ] * B[idxI][idxK]);
+      };
+      Res[idxJ][idxK] = Res[idxJ][idxK] + FxpPseudoStochasticRound0D(accumulator);
+    };
+  };
+}
+
+(* nearest round for piecewise polynomials *)
+def int64_al FxpNearestRound0D(int64_al shift48val) {
+  bool_bl negative = shift48val < 0L;
+  int64_bl absShift48val = negative ? 0L - shift48val : shift48val;
+  int64_al intPart = absShift48val >> 24L;
+  int64_al roundUp = (absShift48val >> 23L) & 1L;
+  int64_al roundedIntPart = intPart + roundUp;
+  int64_al result = negative ? 0L - roundedIntPart : roundedIntPart;
+  return result;
+}
+(* evaluate piecewise quadratic
+   segData[0] is segment maximums, segData[1] is segment deltas, rest coefficients A, B, C
+   for positive x: calculates Q(x)
+   for negative x: calculates negXMinuend - Q(-x)
+*)
+def int64_al EvalPiecewiseQuadratic0D(int32_pl numSeg, const int64_pl[5][numSeg] segData, int64_al x, int64_pl negXMinuend) {
+  bool_bl negative = x < 0L;
+  x = negative ? 0L - x : x;
+  (* probably better to do segment selection with LUT functionality *)
+  int64_al selectedDeltaX = segData[1][0];
+  int64_al selectedCoeffA = segData[2][0];
+  int64_al selectedCoeffB = segData[3][0];
+  int64_al selectedCoeffC = segData[4][0];
+  for seg = [1:numSeg] {
+    bool_bl xLEQSegMax = x <= segData[0][seg];
+    selectedDeltaX = xLEQSegMax ? segData[1][seg] : selectedDeltaX;
+    selectedCoeffA = xLEQSegMax ? segData[2][seg] : selectedCoeffA;
+    selectedCoeffB = xLEQSegMax ? segData[3][seg] : selectedCoeffB;
+    selectedCoeffC = xLEQSegMax ? segData[4][seg] : selectedCoeffC;
+  };
+  x = x + selectedDeltaX;
+  (* ax^2+bx+c *)
+  int64_al axpb = FxpNearestRound0D(x * selectedCoeffA) + selectedCoeffB;
+  int64_al axxpbxpc = FxpNearestRound0D(x * axpb) + selectedCoeffC;
+  int64_al result = negative ? negXMinuend - axxpbxpc : axxpbxpc;
+  return result;
+}
+
+(* sigmoid *)
+def int64_al Sigmoid0D(int64_al x, const int64_pl[5][SigmoidNumSeg] SigmoidSegData) {
+  return EvalPiecewiseQuadratic0D(SigmoidNumSeg, SigmoidSegData, x, FxpOne);
+}
+def void Sigmoid2D(int32_pl i, int32_pl j, int64_al[i][j] x, int64_al[i][j] result, int64_pl[5][SigmoidNumSeg] SigmoidSegData) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      result[idxI][idxJ] = Sigmoid0D(x[idxI][idxJ], SigmoidSegData);
+    };
+  };
+}
+(* its derivative-accumulate *)
+def void SigmoidBwd2D(int32_pl i, int32_pl j, int64_al[i][j] result, int64_al[i][j] resultGrad, int64_al[i][j] xGrad) {
+  int64_al shift48val;
+  int64_al temp;
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      shift48val = result[idxI][idxJ] * (FxpOne - result[idxI][idxJ]);
+      temp = FxpPseudoStochasticRound0D(shift48val);
+      shift48val = resultGrad[idxI][idxJ] * temp;
+      xGrad[idxI][idxJ] = xGrad[idxI][idxJ] + FxpPseudoStochasticRound0D(shift48val);
+    };
+  };
+}
+
+(* tanh *)
+def int64_al Tanh0D(int64_al x, const int64_pl[5][TanhNumSeg] TanhSegData) {
+  return EvalPiecewiseQuadratic0D(TanhNumSeg, TanhSegData, x, 0L);
+}
+def void Tanh2D(int32_pl i, int32_pl j, int64_al[i][j] x, int64_al[i][j] result, int64_pl[5][TanhNumSeg] TanhSegData) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      result[idxI][idxJ] = Tanh0D(x[idxI][idxJ], TanhSegData);
+    };
+  };
+}
+(* its derivative-accumulate *)
+def void TanhBwd2D(int32_pl i, int32_pl j, int64_al[i][j] result, int64_al[i][j] resultGrad, int64_al[i][j] xGrad) {
+  int64_al shift48val;
+  int64_al temp;
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      shift48val = (FxpOne + result[idxI][idxJ]) * (FxpOne - result[idxI][idxJ]);
+      temp = FxpPseudoStochasticRound0D(shift48val);
+      shift48val = resultGrad[idxI][idxJ] * temp;
+      xGrad[idxI][idxJ] = xGrad[idxI][idxJ] + FxpPseudoStochasticRound0D(shift48val);
+    };
+  };
+}
+
+(* rsqrt *)
+def int64_al RSqrt0D(int64_bl x, const int64_pl[5][RSqrtNumSeg] RSqrtSegData) {
+  (* probably better ways of doing range reduction *)
+  int64_al resultMul = 1L;
+  (* max shift 12x2 needed *)
+  for idx = [0:12] {
+    bool_bl lessThan1 = x < FxpOne;
+    x = lessThan1 ? x << 2 : x;
+    resultMul = lessThan1 ? resultMul + resultMul : resultMul;
+  };
+  int64_al result = EvalPiecewiseQuadratic0D(RSqrtNumSeg, RSqrtSegData, x, 0L); (* x cannot be negative, put dummy val *)
+  return result * resultMul;
+}
+
+(* calculate alphaT *)
+extern int64_pl CalcAlphaT(int32_pl iter);
+
+(* param update *)
+def void AdamUpdate0D(int64_al grad, int64_al mu, int64_al nu, int64_al AdamAlphaT, int64_al[3] outputs, const int64_pl[5][RSqrtNumSeg] RSqrtSegData) {
+  int64_al shift48val;
+  int64_al temp;
+  (* mu = beta1 * mu + (1 - beta1) * grad *)
+  shift48val = mu * AdamBeta1 + grad * (FxpOne - AdamBeta1);
+  outputs[0] = FxpPseudoStochasticRound0D(shift48val);
+  (* nu = beta2 * nu + (1 - beta2) * grad^2 *)
+  shift48val = grad * grad;
+  temp = FxpPseudoStochasticRound0D(shift48val);
+  shift48val = nu * AdamBeta2 + temp * (FxpOne - AdamBeta2);
+  outputs[1] = FxpPseudoStochasticRound0D(shift48val);
+  (* param = param - alphaT * mu * rsqrt(nu + epsilon) *)
+  shift48val = AdamAlphaT * outputs[0];
+  temp = FxpPseudoStochasticRound0D(shift48val);
+  shift48val = temp * RSqrt0D(outputs[1] + 1L, RSqrtSegData);
+  outputs[2] = FxpPseudoStochasticRound0D(shift48val);
+}
+def void AdamUpdate1D(int32_pl i, int64_al[i] param, int64_al[i] grad, int64_al[i] mu, int64_al[i] nu, int64_al AdamAlphaT, int64_pl[5][RSqrtNumSeg] RSqrtSegData) {
+  int64_al[3] temp;
+  for idxI = [0:i] {
+    AdamUpdate0D(grad[idxI], mu[idxI], nu[idxI], AdamAlphaT, temp, RSqrtSegData);
+    mu[idxI] = temp[0];
+    nu[idxI] = temp[1];
+    param[idxI] = param[idxI] - temp[2];
+  };
+}
+def void AdamUpdate2D(int32_pl i, int32_pl j, int64_al[i][j] param, int64_al[i][j] grad, int64_al[i][j] mu, int64_al[i][j] nu, int64_al AdamAlphaT, int64_pl[5][RSqrtNumSeg] RSqrtSegData) {
+  int64_al[3] temp;
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      AdamUpdate0D(grad[idxI][idxJ], mu[idxI][idxJ], nu[idxI][idxJ], AdamAlphaT, temp, RSqrtSegData);
+      mu[idxI][idxJ] = temp[0];
+      nu[idxI][idxJ] = temp[1];
+      param[idxI][idxJ] = param[idxI][idxJ] - temp[2];
+    };
+  };
+}
+
+(* zero array - used for gradients, gradient moments, and RNN state *)
+def void SetToZero1D(int32_pl i, int64_al[i] A) {
+  for idxI = [0:i] {
+    A[idxI] = 0L;
+  };
+}
+def void SetToZero2D(int32_pl i, int32_pl j, int64_al[i][j] A) {
+  for idxI = [0:i] {
+    for idxJ = [0:j] {
+      A[idxI][idxJ] = 0L;
+    };
+  };
+}
+
+(* MSE loss and its gradient
+   amplifies distance between correct/incorrect class targets for improved accuracy
+   higher amplification can lead to higher accuracy and training speed at the cost of increased frequency of overflows
+   assumes target is array of 0/1 (NOT in fixpoint)
+*)
+def void MSELossAndAcc(int64_al[BatchSize][NumClasses] pred, int64_al[BatchSize][NumClasses] target, int64_al[2] outputs) {
+  int64_al loss = 0L;
+  int64_al correctPreds = 0L;
+  for samp = [0:BatchSize] {
+    int64_al maxPred = pred[samp][0];
+    int64_al targetAtMax = target[samp][0];
+    for idxCls = [0:NumClasses] {
+      int64_al ampTarget = MSEAmpFactor * ((2L * target[samp][idxCls]) - 1L);
+      int64_al diff = pred[samp][idxCls] - ampTarget;
+      int64_al diff2 = FxpPseudoStochasticRound0D(diff * diff);
+      loss = loss + diff2;
+      bool_bl newMax = pred[samp][idxCls] > maxPred;
+      maxPred = newMax ? pred[samp][idxCls] : maxPred;
+      targetAtMax = newMax ? target[samp][idxCls] : targetAtMax;
+    };
+    correctPreds = correctPreds + targetAtMax;
+  };
+  outputs[0] = loss;
+  outputs[1] = correctPreds;
+}
+def void MSEGrad(int64_al[BatchSize][NumClasses] pred, int64_al[BatchSize][NumClasses] target, int64_al[BatchSize][NumClasses] grad) {
+  int64_pl fxp2RecipSC = 2L * FxpOne / (BatchSize * NumClasses); (* mean reduction factor *)
+  for samp = [0:BatchSize] {
+    for idxCls = [0:NumClasses] {
+      int64_al ampTarget = MSEAmpFactor * ((2L * target[samp][idxCls]) - 1L);
+      int64_al diff = pred[samp][idxCls] - ampTarget;
+      grad[samp][idxCls] = FxpPseudoStochasticRound0D(diff * fxp2RecipSC);
+    };
+  };
+}
+
+(* free data that will no longer be used *)
+(* dimensions matter, but not size *)
+extern void Free1D(int64_al[1] data);
+extern void Free2D(int64_al[1][1] data);
