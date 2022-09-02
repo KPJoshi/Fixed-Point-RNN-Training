@@ -81,3 +81,8 @@ This leads to overflows with increasing frequency as training progresses.
 Using the log-sum-exp trick *does not* prevent these overflows.
 Using mean squared error loss instead sets static targets for the correct and incorrect classes, that we can ensure are well within the representable range.
 
+## Acknowledgements
+
+This library was developed in the summer of 2022, with financial support from Microsoft Research India, Bangalore.
+[Rahul Sharma](https://www.microsoft.com/en-us/research/people/rahsha/) and [Saksham Gupta](https://drunkenlegend.github.io/saksham/) provided guidance on the implementation requirements.
+This library uses [EzPC](https://github.com/mpc-msri/EzPC), a language for secure machine learning.
