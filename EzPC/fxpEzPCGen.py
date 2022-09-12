@@ -390,8 +390,8 @@ class ReLUFunc(Func):
         bwdCode = ''
         if a.requiresGrad:
             bwdTemplate = 'ReLUBwd2D({idims}{a}, {a}Grad, {result}Grad);\n'
-            bwdCode += bwdTemplate.format(idims = idims, a = a.name,
-                                          result = result.name)
+            bwdCode = bwdTemplate.format(idims = idims, a = a.name,
+                                         result = result.name)
         bwdTape.append(bwdCode)
         return result
 
@@ -413,8 +413,8 @@ class SigmoidFunc(Func):
         bwdCode = ''
         if a.requiresGrad:
             bwdTemplate = 'SigmoidBwd2D({idims}{result}, {result}Grad, {a}Grad);\n'
-            bwdCode += bwdTemplate.format(idims = idims, result = result.name,
-                                          a = a.name)
+            bwdCode = bwdTemplate.format(idims = idims, result = result.name,
+                                         a = a.name)
         bwdTape.append(bwdCode)
         return result
 
@@ -436,12 +436,53 @@ class TanhFunc(Func):
         bwdCode = ''
         if a.requiresGrad:
             bwdTemplate = 'TanhBwd2D({idims}{result}, {result}Grad, {a}Grad);\n'
-            bwdCode += bwdTemplate.format(idims = idims, result = result.name,
-                                          a = a.name)
+            bwdCode = bwdTemplate.format(idims = idims, result = result.name,
+                                         a = a.name)
         bwdTape.append(bwdCode)
         return result
 
 tanh = TanhFunc.apply
+
+# max pool
+class MaxPoolFunc(Func):
+    @staticmethod
+    def apply(a: Tensor, NumChan: int, InNumRows: int, InNumCols: int,
+              FiltNumRows: int, FiltNumCols: int, OutNumRows: int, OutNumCols: int,
+              StrideRow: int, StrideCol: int, PadRow: int, PadCol: int) -> Tensor:
+        assert len(a.shape) == 2
+        resultShape = (a.shape[0], str(NumChan * OutNumRows * OutNumCols))
+        result = Tensor(resultShape, anyInputRequiresGrad(a))
+        fwdTemplate = 'int64_al{shape} {result};\n'\
+                      'MaxPool({NumSamples}, {NumChan}, {InNumRows}, {InNumCols},\n'\
+                      '{FiltNumRows}, {FiltNumCols}, {OutNumRows}, {OutNumCols},\n'\
+                      '{StrideRow}, {StrideCol}, {PadRow}, {PadCol},\n'\
+                      '{a}, {result});\n'
+        fwdCode = fwdTemplate.format(shape = shapeToArrayDefString(result.shape),
+                                     result = result.name, NumSamples = a.shape[0],
+                                     NumChan = NumChan, InNumRows = InNumRows,
+                                     InNumCols = InNumCols, FiltNumRows = FiltNumRows,
+                                     FiltNumCols = FiltNumCols, OutNumRows = OutNumRows,
+                                     OutNumCols = OutNumCols, StrideRow = StrideRow,
+                                     StrideCol = StrideCol, PadRow = PadRow,
+                                     PadCol = PadCol, a = a.name)
+        fwdTape.append(fwdCode)
+        bwdCode = ''
+        if a.requiresGrad:
+            bwdTemplate = 'MaxPoolBwd({NumSamples}, {NumChan}, {InNumRows}, {InNumCols},\n'\
+                          '{FiltNumRows}, {FiltNumCols}, {OutNumRows}, {OutNumCols},\n'\
+                          '{StrideRow}, {StrideCol}, {PadRow}, {PadCol},\n'\
+                          '{a}, {a}Grad, {result}, {result}Grad);\n'
+            bwdCode = bwdTemplate.format(NumSamples = a.shape[0], NumChan = NumChan,
+                                         InNumRows = InNumRows, InNumCols = InNumCols,
+                                         FiltNumRows = FiltNumRows, FiltNumCols = FiltNumCols,
+                                         OutNumRows = OutNumRows, OutNumCols = OutNumCols,
+                                         StrideRow = StrideRow, StrideCol = StrideCol,
+                                         PadRow = PadRow, PadCol = PadCol, a = a.name,
+                                         result = result.name)
+        bwdTape.append(bwdCode)
+        return result
+
+maxPool = MaxPoolFunc.apply
 
 # mean squared error loss
 class MeanSquaredErrorLossFunc(Func):
