@@ -446,43 +446,72 @@ tanh = TanhFunc.apply
 # max pool
 class MaxPoolFunc(Func):
     @staticmethod
-    def apply(a: Tensor, NumChan: int, InNumRows: int, InNumCols: int,
+    def apply(inp: Tensor, NumChan: int, InNumRows: int, InNumCols: int,
               FiltNumRows: int, FiltNumCols: int, OutNumRows: int, OutNumCols: int,
               StrideRow: int, StrideCol: int, PadRow: int, PadCol: int) -> Tensor:
-        assert len(a.shape) == 2
-        resultShape = (a.shape[0], str(NumChan * OutNumRows * OutNumCols))
-        result = Tensor(resultShape, anyInputRequiresGrad(a))
+        assert len(inp.shape) == 2
+        resultShape = (inp.shape[0], str(NumChan * OutNumRows * OutNumCols))
+        result = Tensor(resultShape, anyInputRequiresGrad(inp))
+        paramsTemplate = '{NumSamples}, {NumChan}, {InNumRows}, {InNumCols},\n'\
+                         '{FiltNumRows}, {FiltNumCols}, {OutNumRows}, {OutNumCols},\n'\
+                         '{StrideRow}, {StrideCol}, {PadRow}, {PadCol},\n'
+        paramCode = paramsTemplate.format(NumSamples = inp.shape[0], NumChan = NumChan,
+                                          InNumRows = InNumRows, InNumCols = InNumCols,
+                                          FiltNumRows = FiltNumRows, FiltNumCols = FiltNumCols,
+                                          OutNumRows = OutNumRows, OutNumCols = OutNumCols,
+                                          StrideRow = StrideRow, StrideCol = StrideCol,
+                                          PadRow = PadRow, PadCol = PadCol)
         fwdTemplate = 'int64_al{shape} {result};\n'\
-                      'MaxPool({NumSamples}, {NumChan}, {InNumRows}, {InNumCols},\n'\
-                      '{FiltNumRows}, {FiltNumCols}, {OutNumRows}, {OutNumCols},\n'\
-                      '{StrideRow}, {StrideCol}, {PadRow}, {PadCol},\n'\
-                      '{a}, {result});\n'
+                      'MaxPool({params}{inp}, {result});\n'
         fwdCode = fwdTemplate.format(shape = shapeToArrayDefString(result.shape),
-                                     result = result.name, NumSamples = a.shape[0],
-                                     NumChan = NumChan, InNumRows = InNumRows,
-                                     InNumCols = InNumCols, FiltNumRows = FiltNumRows,
-                                     FiltNumCols = FiltNumCols, OutNumRows = OutNumRows,
-                                     OutNumCols = OutNumCols, StrideRow = StrideRow,
-                                     StrideCol = StrideCol, PadRow = PadRow,
-                                     PadCol = PadCol, a = a.name)
+                                     result = result.name, params = paramCode, inp = inp.name)
         fwdTape.append(fwdCode)
         bwdCode = ''
-        if a.requiresGrad:
-            bwdTemplate = 'MaxPoolBwd({NumSamples}, {NumChan}, {InNumRows}, {InNumCols},\n'\
-                          '{FiltNumRows}, {FiltNumCols}, {OutNumRows}, {OutNumCols},\n'\
-                          '{StrideRow}, {StrideCol}, {PadRow}, {PadCol},\n'\
-                          '{a}, {a}Grad, {result}, {result}Grad);\n'
-            bwdCode = bwdTemplate.format(NumSamples = a.shape[0], NumChan = NumChan,
-                                         InNumRows = InNumRows, InNumCols = InNumCols,
-                                         FiltNumRows = FiltNumRows, FiltNumCols = FiltNumCols,
-                                         OutNumRows = OutNumRows, OutNumCols = OutNumCols,
-                                         StrideRow = StrideRow, StrideCol = StrideCol,
-                                         PadRow = PadRow, PadCol = PadCol, a = a.name,
-                                         result = result.name)
+        if inp.requiresGrad:
+            bwdTemplate = 'MaxPoolBwd({params}{inp}, {inp}Grad, {result}, {result}Grad);\n'
+            bwdCode = bwdTemplate.format(params = paramCode, inp = inp.name, result = result.name)
         bwdTape.append(bwdCode)
         return result
 
 maxPool = MaxPoolFunc.apply
+
+# convolution
+class ConvFunc(Func):
+    @staticmethod
+    def apply(inp: Tensor, filt: Tensor, bias: Tensor, InNumChan: int,
+              InNumRows: int, InNumCols: int, FiltNumRows: int, FiltNumCols: int,
+              OutNumChan: int, OutNumRows: int, OutNumCols: int,
+              StrideRow: int, StrideCol: int, PadRow: int, PadCol: int) -> Tensor:
+        assert len(inp.shape) == 2 and len(filt.shape) == 2 and len(bias.shape) == 1
+        resultShape = (inp.shape[0], str(OutNumChan * OutNumRows * OutNumCols))
+        result = Tensor(resultShape, anyInputRequiresGrad(inp, filt, bias))
+        paramsTemplate = '{NumSamples}, {InNumChan}, {InNumRows}, {InNumCols},\n'\
+                         '{FiltNumRows}, {FiltNumCols},\n'\
+                         '{OutNumChan}, {OutNumRows}, {OutNumCols},\n'\
+                         '{StrideRow}, {StrideCol}, {PadRow}, {PadCol}\n'
+        paramCode = paramsTemplate.format(NumSamples = inp.shape[0], InNumChan = InNumChan,
+                                          InNumRows = InNumRows, InNumCols = InNumCols,
+                                          FiltNumRows = FiltNumRows, FiltNumCols = FiltNumCols,
+                                          OutNumChan = OutNumChan, OutNumRows = OutNumRows,
+                                          OutNumCols = OutNumCols,
+                                          StrideRow = StrideRow, StrideCol = StrideCol,
+                                          PadRow = PadRow, PadCol = PadCol)
+        fwdTemplate = 'int64_al{shape} {result};\n'\
+                      'Conv({params}{inp}, {filt}, {bias}, {result});\n'
+        fwdCode = fwdTemplate.format(shape = shapeToArrayDefString(result.shape),
+                                     result = result.name, params = paramCode,
+                                     inp = inp.name, filt = filt.name, bias = bias.name)
+        fwdTape.append(fwdCode)
+        if inp.requiresGrad:
+            bwdTemplate = 'ConvBwdIF({params}{inp}, {inp}Grad, {filt}, {filt}Grad, {bias}Grad, {result}Grad);'
+        else:
+            bwdTemplate = 'ConvBwdF({params}{inp}, {filt}Grad, {bias}Grad, {result}Grad);'
+        bwdCode = bwdTemplate.format(params = paramCode, inp = inp.name, filt = filt.name,
+                                     bias = bias.name, result = result.name)
+        bwdTape.append(bwdCode)
+        return result
+
+conv = ConvFunc.apply
 
 # mean squared error loss
 class MeanSquaredErrorLossFunc(Func):
